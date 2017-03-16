@@ -1,0 +1,140 @@
+---
+title: "Olympic Trial Running"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Checks on Data
+Data is running olympic trial data - 200,400,800, and 1500m runs only. 
+
+First, run Leven's Test of Homogeneity and D'Agostino Skewness Test on the model (Percent Difference by Stroke, Year, and Distance).
+
+```{r, echo = FALSE,message = FALSE}
+library(dplyr); library(moments); library(car);
+# Read in data, remove all NA, convert % diff to numeric, remove any 0's, and convert year to factor
+ot.data <- read.csv("~/OneDrive/Research/Swimming/runningAnalysis/otRunningData.csv") %>%
+subset(distance == 100 | distance == 200 | distance == 400 | distance == 800 | distance == 1500) %>% subset(year > 1970) %>% mutate(interaction = interaction(as.factor(place), distance)) %>% subset(interaction != "8.100")
+ot.data[is.na(ot.data)] <- 0
+ot.data$per.diff <- as.numeric(as.character(ot.data$per.diff))
+ot.data <- subset(ot.data, per.diff > .1)
+ot.data$year <- as.factor(ot.data$year)
+
+# Using a 2 factor anova with fixed effects: Year & Distance
+leveneTest(per.diff ~ year*distance, data = ot.data, center = mean)
+agostino.test(ot.data$per.diff)
+```
+
+This, therefore requires non parametric testing. For this, Kruskal-Wallis Rank Sum Test with Pairwise Wilcoxon post hocs will be used.
+
+### Main effect of year
+The KW result will be first followed by the Wilcoxon post hoc tests with Holm-Bonferroni corrections (value = p value for given comparison).
+
+```{r, echo = F, warning = F, message = F}
+library(reshape)
+ot.data %>% group_by(year) %>% summarize(mean = mean(per.diff, na.rm = TRUE), sd = sd(per.diff, na.rm = TRUE), median(per.diff))
+kruskal.test(per.diff ~ year, data = ot.data)
+  
+yr.ph <- pairwise.wilcox.test(ot.data$per.diff, ot.data$year, paired = F, p.adjust.method="holm") #post hocs
+lapply(as.list(seq(1968, 2016, 4)), function(x) {subset(melt(yr.ph[[3]]), X1 == x | X2 == x) %>% subset(value > 0) %>% round(6)})
+```
+
+### Main Effect for Distance 
+The KW result will be first followed by the Wilcoxon post hoc tests with Holm-Bonferroni corrections (value = p value for given comparison).
+```{r, echo = F, warning = F}
+ot.data %>% group_by(distance) %>% summarize(mean = mean(per.diff, na.rm = TRUE), sd = sd(per.diff, na.rm = TRUE), median(per.diff))
+kruskal.test(per.diff ~ distance, data = ot.data)
+  
+d.ph <- pairwise.wilcox.test(ot.data$per.diff, ot.data$distance, paired = F, p.adjust.method="holm") #post hocs
+lapply(as.list(c(100, 200, 400, 800, 1500)), function(x) {subset(melt(d.ph[[3]]), X1 == x | X2 == x) %>% subset(value > 0) %>% round(6)})
+```
+
+\newpage # Figures
+
+Figure 1: Gender gap for each year and event
+
+```{r, echo = FALSE, warning  = FALSE}
+library(ggplot2)
+data2 <- ot.data
+data2$year <- as.factor(data2$year)
+data2$distance <- as.factor(data2$distance)
+ 
+year.means <- data2 %>% 
+  group_by(year) %>% 
+  summarize(
+        mean = mean(per.diff, na.rm = TRUE), 
+        sd = sd(per.diff, na.rm = TRUE),
+        max = max(per.diff), 
+        min = min(per.diff))
+
+########## Year Plot ##########
+
+# Manipulate data for graphing
+data2$year <- as.numeric(data2$year) 
+
+# Make new Year means table with similar x axis (Percent_Difference)
+names(year.means) <- c('Year','Percent_Difference','SD','Max','Min')
+year.means$Year <- as.numeric(year.means$Year) 
+
+# Theme for Plot
+theme <- theme(
+               plot.background = element_rect(fill = "transparent",color = NA),
+               panel.background = element_rect(fill = "transparent",color = NA),
+               axis.line.x = element_line(size = .5, color = "black"),
+               axis.line.y = element_line(size = .5, color = "black"),
+               axis.text = element_text(family = "Times",size = 16, color = "black"),
+               axis.title.x = element_blank(),
+               axis.title.y = element_text(family = "Times", size = 16, margin = margin(r = 10)),
+               axis.ticks.length = unit(.25, "cm"),
+               axis.ticks = element_line(colour = 'black', size = .5),
+               legend.text = element_text(size = 14, family = "Times"),
+               legend.title = element_blank(),
+               legend.key = element_rect(fill = "white"),
+               plot.margin=unit(c(1,1,1,1),"cm")
+)
+
+# Define shapes and breaks
+distance.shapes = c(21,24,23,22,21)
+
+# Begin Construct Graph
+base <- ggplot(data = data2, aes(x = year, y = per.diff))
+scatter <- geom_point(size = 5, position = position_jitter(width = 0.8), aes(shape = distance, fill = distance), color = "black", stroke = 1) 
+line <- geom_line(data = year.means, aes(x = Year, y = Percent_Difference), size = 3)
+ribbon <- geom_ribbon(data = year.means, aes(x = Year, y = Percent_Difference, ymin = Percent_Difference-SD,ymax = Percent_Difference+SD),alpha = 0.15) 
+
+# Combine for graph
+raw <- base + scatter + theme +
+scale_shape_manual(values = distance.shapes, 
+                   guide = guide_legend(keywidth=.2,keyheight=.28,default.unit="inch"),
+                   breaks=c("100","200","400", "800","1500")) + 
+  scale_fill_manual(values = c("white","#888888","#222222","#444444", "#666666"),
+                    breaks=c("100","200","400", "800","1500")) +
+  line + 
+  ribbon + 
+  scale_x_discrete(limits = c("1972","1976","1980","1984","1988","1992",
+                              "1996","2000","2004","2008","2012","2016")) +
+  ylab("Performance Gap (% Difference)") +
+  scale_y_continuous(breaks = c(seq(6,24,2))) + 
+  expand_limits(y = c(6,24), x = c(.5,12.5)) + 
+  annotate("text", label = "A", size = 12, x = 1, y = 24.5, family = "Times")
+
+plot(raw)
+```
+
+\newpage Figure 2: LOESS Smoothing Plot for each year and distance
+
+```{r, echo = F, warning= FALSE}
+smooth <- ggplot(data = ot.data, aes(x = as.numeric(year), y = per.diff)) + geom_smooth(size = 1.2, color = "black") + 
+  geom_smooth(size = .5, color = "black", alpha = 0.15, aes(linetype = distance)) +
+  theme +
+  ylab("Performance Gap (% Difference)") +
+  scale_x_discrete(limits = c("1972","1976","1980","1984","1988","1992",
+                              "1996","2000","2004","2008","2012","2016")) +
+  scale_y_continuous(breaks = c(seq(8,24,4))) + expand_limits(y = c(8,24), x = c(.5,12.5)) + 
+  scale_linetype_manual(values = c(3,2,4,5,6), guide = guide_legend(keywidth = .5, keyheight=.3,default.unit="inch"), breaks=c("100","200","400", "800","1500")) +
+  annotate("text", label = "B", size = 12, x = 1, y = 24.5, family = "Times")
+
+plot(smooth)
+```
